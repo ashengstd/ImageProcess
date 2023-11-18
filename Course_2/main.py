@@ -6,15 +6,22 @@ from models.vgg import VGGClassifier
 from torch.utils.data import DataLoader,random_split
 from utils.dataset import palmPrintDataset
 import argparse
+from tqdm import tqdm
 
 # 检查GPU是否可用
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 定义命令行参数
 parser = argparse.ArgumentParser(description='CNN Model Selection')
-parser.add_argument('--model', type=str, default='vgg', choices=['vgg', 'resnet'],
+parser.add_argument('--model', '-m', type=str, default='vgg', choices=['vgg', 'resnet'],
                     help='Choose the CNN model (vgg or resnet)')
+parser.add_argument('--directory', '-d', type=str, default='ouput',
+                    help='Where the dataset is saved')
 args = parser.parse_args()
+
+print('Running model selection with the following parameters:')
+print(f'Model: {args.model}')
+print(f'Dataset directory: {args.directory}')
 
 # 定义数据预处理和加载
 transform = transforms.Compose([
@@ -54,6 +61,7 @@ for epoch in range(num_epochs):
     model.train()
     total_loss = 0.0
 
+    # 训练模型
     for inputs, labels in train_dataloader:
         inputs, labels = inputs.to(device), labels.to(device, dtype=torch.long)  # 将数据移动到GPU
         optimizer.zero_grad()
@@ -64,6 +72,20 @@ for epoch in range(num_epochs):
         total_loss += loss.item()
 
     print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss / len(train_dataloader)}')
+
+    # 测试模型
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, labels in test_dataloader:
+            inputs, labels = inputs.to(device), labels.to(device, dtype=torch.long)  # 将数据移动到GPU
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    accuracy = correct / total
+    print(f'Accuracy on the test set: {accuracy:.2f}')
 
 # 测试模型
 model.eval()
