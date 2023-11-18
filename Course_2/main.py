@@ -15,8 +15,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 parser = argparse.ArgumentParser(description='CNN Model Selection')
 parser.add_argument('--model', '-m', type=str, default='vgg', choices=['vgg', 'resnet'],
                     help='Choose the CNN model (vgg or resnet)')
-parser.add_argument('--directory', '-d', type=str, default='ouput',
+parser.add_argument('--directory', '-d', type=str, default='output',
                     help='Where the dataset is saved')
+parser.add_argument('--epoch', '-e', type=int, default=20,
+                    help='Number of epochs to train the model')
 args = parser.parse_args()
 
 print('Running model selection with the following parameters:')
@@ -32,7 +34,7 @@ transform = transforms.Compose([
 ])
 
 # 替换为你的数据集路径和类别数
-dataset = palmPrintDataset(directory='output', transform=transform)
+dataset = palmPrintDataset(directory=args.directory, transform=transform)
 total_size = len(dataset)
 train_size = int(0.5 * total_size)
 train_dataset, test_dataset = random_split(dataset, [train_size, total_size - train_size])
@@ -41,14 +43,11 @@ train_dataset, test_dataset = random_split(dataset, [train_size, total_size - tr
 train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
-
 # 选择模型
 if args.model == 'vgg':
     model = VGGClassifier(num_classes=len(dataset.classes), weights='DEFAULT').to(device)
-    num_epochs = 20
 elif args.model == 'resnet':
     model = ResNetClassifier(num_classes=len(dataset.classes), weights='DEFAULT').to(device)
-    num_epochs = 10
 else:
     raise ValueError('Invalid model choice. Please choose between "vgg" and "resnet".')
 
@@ -57,12 +56,12 @@ criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 # 训练模型
-for epoch in range(num_epochs):
+for epoch in range(args.epoch):
     model.train()
     total_loss = 0.0
 
-    # 训练模型
-    for inputs, labels in train_dataloader:
+    # 使用tqdm显示训练进度
+    for inputs, labels in tqdm(train_dataloader, desc=f'Epoch {epoch + 1}/{args.epoch}',leave=False):
         inputs, labels = inputs.to(device), labels.to(device, dtype=torch.long)  # 将数据移动到GPU
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -71,21 +70,22 @@ for epoch in range(num_epochs):
         optimizer.step()
         total_loss += loss.item()
 
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss / len(train_dataloader)}')
+    print(f'Epoch {epoch + 1}/{args.epoch}, Loss: {total_loss / len(train_dataloader):.6f}')
 
     # 测试模型
     correct = 0
     total = 0
     with torch.no_grad():
-        for inputs, labels in test_dataloader:
+        for inputs, labels in tqdm(test_dataloader, desc='Testing',leave=False):
             inputs, labels = inputs.to(device), labels.to(device, dtype=torch.long)  # 将数据移动到GPU
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
+            loss = criterion(outputs, labels)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
     accuracy = correct / total
-    print(f'Accuracy on the test set: {accuracy:.2f}')
+    print(f'Test, Loss: {total_loss / len(train_dataloader):.6f}, Test Acc: {accuracy:.4f}')
 
 # 测试模型
 model.eval()
@@ -93,7 +93,7 @@ correct = 0
 total = 0
 
 with torch.no_grad():
-    for inputs, labels in test_dataloader:
+    for inputs, labels in tqdm(test_dataloader, desc='Testing',leave=False):
         inputs, labels = inputs.to(device), labels.to(device, dtype=torch.long)  # 将数据移动到GPU
         outputs = model(inputs)
         _, predicted = torch.max(outputs.data, 1)
@@ -101,4 +101,4 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 
 accuracy = correct / total
-print(f'Accuracy on the test set: {accuracy:.2f}')
+print(f'Final Accuracy on the test set: {accuracy:.4f}')
