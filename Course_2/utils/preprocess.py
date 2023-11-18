@@ -3,36 +3,47 @@ import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
-def gabor_kernel(ksize, sigma, gamma, lamda, alpha, psi):
-    sigma_x = sigma
-    sigma_y = sigma / gamma
 
-    ymax = xmax = ksize // 2  # 9//2
-    xmin, ymin = -xmax, -ymax
-
-    (y, x) = np.meshgrid(np.arange(ymin, ymax + 1), np.arange(xmin, xmax + 1))  # 生成网格点坐标矩阵
-    x_alpha = x * np.cos(alpha) + y * np.sin(alpha)
-    y_alpha = -x * np.sin(alpha) + y * np.cos(alpha)
-    exponent = np.exp(-.5 * (x_alpha ** 2 / sigma_x ** 2 + y_alpha ** 2 / sigma_y ** 2))
-    kernel = exponent * np.cos(2 * np.pi / lamda * x_alpha + psi)
-    return kernel
-
-
-def gabor(gray_img, ksize=9, sigma=1.0, gamma=0.5, lamda=5, psi=-np.pi/2):#gabor滤波
+#gabor滤波
+def gabor(gray_img, ksize=9, sigma=1.0, gamma=0.5, lamda=5, psi=-np.pi/2):
     filters = []
     for alpha in np.arange(0, np.pi, np.pi / 6):
-        kern = gabor_kernel(ksize=ksize, sigma=sigma, gamma=gamma,lamda=lamda, alpha=alpha, psi=psi)
-        filters.append(kern)
+        kernel = cv2.getGaborKernel((ksize, ksize), sigma, alpha, lamda, gamma, psi, ktype=cv2.CV_64F)
+        filters.append(kernel)
 
     gabor_img = np.zeros(gray_img.shape, dtype=np.uint8)
 
-    i = 0
     for kern in filters:
         fimg = cv2.filter2D(gray_img, ddepth=cv2.CV_8U, kernel=kern)
         gabor_img = cv2.max(gabor_img, fimg)
-        i += 1
 
     return gabor_img
+
+def remove_lower_connect_components(image):
+    # 寻找连通分量
+    connectivity = 8
+    output = cv2.connectedComponentsWithStats(image, connectivity, cv2.CV_32S)
+
+    # 获取连通分量信息
+    num_labels = output[0]
+    labels = output[1]
+    stats = output[2]
+
+    # 计算总面积
+    total_area = np.sum(stats[:, cv2.CC_STAT_AREA])
+
+    # 标准化连通分量的面积
+    normalized_areas = stats[:, cv2.CC_STAT_AREA] / total_area
+
+    # 定义标准化面积阈值
+    threshold_normalized_area = 0.01
+
+    # 去除标准化面积小于阈值的连通分量
+    filtered_image = np.zeros_like(labels)
+    for i in range(1, num_labels):
+        if normalized_areas[i] >= threshold_normalized_area:
+            filtered_image[labels == i] = 255
+    return filtered_image
 
 def process_image(person_folder_path, output_person_folder, image_file):
     image_path = os.path.join(person_folder_path, image_file)
@@ -48,30 +59,32 @@ def process_image(person_folder_path, output_person_folder, image_file):
     # 应用Gabor滤波器到图像
     gabor_result = gabor(image, ksize=9, sigma=1.0, gamma=0.5, lamda=5, psi=-np.pi/2)
 
-    # 对Gabor滤波结果应用拉普拉斯算子
-    laplacian_result = cv2.Laplacian(gabor_result, cv2.CV_32F)
-
     # 调整对比度
     alpha = 2.5  # 调整因子，可以根据需要调整
-    adjusted_image = cv2.convertScaleAbs(laplacian_result, alpha=alpha, beta=0)
+    adjusted_image = cv2.convertScaleAbs(gabor_result, alpha=alpha, beta=0)
 
-    ksize = 5
-    blurred_img = cv2.GaussianBlur(adjusted_image, (ksize, ksize), sigmaX=5)
+    # 高斯滤波
+    blurred_img = cv2.GaussianBlur(adjusted_image, (0, 0), 1.0)
+
+    # 通过减去高斯滤波结果来增强纹理
+    enhanced = cv2.addWeighted(adjusted_image, 2, blurred_img, -1, 0)
 
     # 二值化图像
-    _, binary_img = cv2.threshold(blurred_img, 54, 255, cv2.THRESH_BINARY)
+    _, binary_img = cv2.threshold(enhanced, 54, 255, cv2.THRESH_BINARY)
 
-    kernel = np.ones((3, 3), np.uint8)
-    opened_img = cv2.morphologyEx(binary_img, cv2.MORPH_OPEN, kernel, iterations=1)
+    # 连通分量
+    final_img = remove_lower_connect_components(binary_img)
 
     # 保存处理后的图像到输出文件夹
     output_image_path = os.path.join(output_person_folder, image_file)
-    cv2.imwrite(output_image_path, opened_img)
+    cv2.imwrite(output_image_path, final_img)
 
 def process_images_in_folder(dataset_root, output_root):
+    # 检查数据集文件夹是否存在
     if not os.path.exists(dataset_root):
         print(f"Dataset folder {dataset_root} does not exist.")
         return None
+    
     # 创建输出文件夹
     if not os.path.exists(output_root):
         os.makedirs(output_root)
@@ -80,7 +93,6 @@ def process_images_in_folder(dataset_root, output_root):
 
         # 确保当前路径是一个文件夹
         if os.path.isdir(person_folder_path):
-            print(f"Processing images in folder: {person_folder}")
 
             # 创建当前人的输出文件夹
             output_person_folder = os.path.join(output_root, person_folder)
