@@ -4,6 +4,7 @@ import torchvision.transforms as transforms
 from models.resnet import ResNetClassifier
 from models.vgg import VGGClassifier
 from torch.utils.data import DataLoader,random_split
+from torch.utils.tensorboard import SummaryWriter
 from utils.dataset import palmPrintDataset
 import argparse
 from tqdm import tqdm
@@ -19,6 +20,8 @@ parser.add_argument('--directory', '-d', type=str, default='output',
                     help='Where the dataset is saved')
 parser.add_argument('--epoch', '-e', type=int, default=20,
                     help='Number of epochs to train the model')
+parser.add_argument('-t', '--tensorboard', action='store_true', 
+                    help='Enable TensorBoard logging')
 args = parser.parse_args()
 
 print('Running model selection with the following parameters:')
@@ -28,7 +31,7 @@ print(f'Dataset directory: {args.directory}')
 # 定义数据预处理和加载
 transform = transforms.Compose([
     transforms.ToPILImage(),
-    transforms.Resize((64, 64)),
+    transforms.Resize((96, 96)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485], std=[0.229]),
 ])
@@ -51,6 +54,11 @@ elif args.model == 'resnet':
 else:
     raise ValueError('Invalid model choice. Please choose between "vgg" and "resnet".')
 
+if args.tensorboard:
+    writer = SummaryWriter(log_dir='logs')
+else:
+    writer = None
+
 # 初始化损失函数和优化器
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -70,6 +78,7 @@ for epoch in range(args.epoch):
         optimizer.step()
         total_loss += loss.item()
 
+    avg_train_loss = total_loss / len(train_dataloader)
     print(f'Epoch {epoch + 1}/{args.epoch}, Loss: {total_loss / len(train_dataloader):.6f}')
 
     # 测试模型
@@ -85,7 +94,18 @@ for epoch in range(args.epoch):
             correct += (predicted == labels).sum().item()
 
     accuracy = correct / total
+    avg_test_loss = loss / len(test_dataloader)
     print(f'Test, Loss: {total_loss / len(train_dataloader):.6f}, Test Acc: {accuracy:.4f}')
+
+    # 写入Tensorboard
+    if writer is not None:
+        writer.add_scalar('Training/Loss', avg_train_loss, epoch + 1)
+        writer.add_scalar('Testing/Loss', avg_test_loss, epoch + 1)
+        writer.add_scalar('Testing/Accuracy', accuracy, epoch + 1)
+
+# 关闭Tensorboard
+if writer is not None:
+    writer.close()
 
 # 测试模型
 model.eval()
